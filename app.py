@@ -379,7 +379,7 @@ def _empty_figure(message: str) -> go.Figure:
     fig.add_annotation(text=message, x=0.5, y=0.5, xref="paper", yref="paper", showarrow=False,
                        font={"color": "#CBD5E1", "size": 14})
     fig.update_layout(template="plotly_dark", paper_bgcolor="rgba(0,0,0,0)",
-                      plot_bgcolor="rgba(0,0,0,0)", margin={"l": 20, "r": 20, "t": 30, "b": 20})
+                      plot_bgcolor="rgba(0,0,0,0)", height=360, margin={"l": 20, "r": 20, "t": 30, "b": 20})
     return fig
 
 
@@ -393,7 +393,7 @@ def build_charts(data: pd.DataFrame, metadata: dict[str, Any]):
         title="Sentiment distribution",
     )
     distribution.update_layout(template="plotly_dark", paper_bgcolor="rgba(0,0,0,0)",
-                               plot_bgcolor="rgba(0,0,0,0)", font_color="#E5EDF5",
+                               plot_bgcolor="rgba(0,0,0,0)", font_color="#E5EDF5", height=360,
                                legend_title_text="", margin={"l": 10, "r": 10, "t": 55, "b": 10})
 
     date_col = metadata.get("date_column")
@@ -406,7 +406,7 @@ def build_charts(data: pd.DataFrame, metadata: dict[str, Any]):
                                markers=True, color_discrete_map=SENTIMENT_COLORS,
                                title="Sentiment over time (from uploaded dates)")
             timeline.update_layout(template="plotly_dark", paper_bgcolor="rgba(0,0,0,0)",
-                                   plot_bgcolor="rgba(0,0,0,0)", font_color="#E5EDF5",
+                                   plot_bgcolor="rgba(0,0,0,0)", font_color="#E5EDF5", height=360,
                                    legend_title_text="", margin={"l": 20, "r": 15, "t": 55, "b": 25})
         else:
             timeline = _empty_figure("Date field found, but no dates could be parsed.")
@@ -424,7 +424,7 @@ def build_charts(data: pd.DataFrame, metadata: dict[str, Any]):
                               barmode="group", color_discrete_map=SENTIMENT_COLORS,
                               title="Sentiment by policy/category field")
         category_fig.update_layout(template="plotly_dark", paper_bgcolor="rgba(0,0,0,0)",
-                                   plot_bgcolor="rgba(0,0,0,0)", font_color="#E5EDF5",
+                                   plot_bgcolor="rgba(0,0,0,0)", font_color="#E5EDF5", height=360,
                                    legend_title_text="", margin={"l": 20, "r": 15, "t": 55, "b": 70},
                                    xaxis_tickangle=-25)
     else:
