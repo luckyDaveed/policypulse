@@ -1,26 +1,17 @@
----
-title: PolicyPulse
-emoji: 📊
-colorFrom: indigo
-colorTo: teal
-sdk: gradio
-sdk_version: 6.5.1
-app_file: app.py
-pinned: false
----
+# PolicyPulse — Render deployment package
 
-# PolicyPulse – Policy Sentiment Intelligence Platform
+This package is configured for a Python/Gradio web service on Render.
 
-A Gradio application for analysing user-uploaded CSV, XLSX and XLS datasets with VADER sentiment analysis.
+## Render service settings
+- Service type: Web Service
+- Runtime: Python 3
+- Build command: `pip install -r requirements.txt`
+- Start command: `python app.py`
+- Instance plan: Free (if available in the account/region)
 
-## Scope
-- The application analyses datasets uploaded by users.
-- It does not have a direct X/Twitter API connection and does not collect live posts continuously.
-- Frequent terms are calculated from the uploaded file; they are not live X trends.
-- Results describe only the uploaded dataset and are not automatically representative of Nigeria.
-- VADER may misinterpret Nigerian Pidgin, slang, sarcasm, irony and context.
-- The sample/demo dataset is synthetic and must not be treated as real public opinion.
-- The application does not include a permanent database.
+The app binds to `0.0.0.0` and reads Render's `PORT` environment variable.
 
-## Run
-The Space uses the Gradio SDK. Additional Python dependencies are listed in `requirements.txt`.
+## Important limitations
+- Render Free web services sleep after 15 minutes without traffic and may take about one minute to wake.
+- The free service has an ephemeral filesystem; uploaded data and session files should not be treated as permanent storage.
+- This application analyses uploaded datasets. It does not connect directly to X/Twitter or collect live posts continuously.

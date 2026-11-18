@@ -815,4 +815,4 @@ demo = build_app()
 
 if __name__ == "__main__":
     # Colab can show a public share link; Hugging Face Spaces will manage its own server.
-    demo.queue(default_concurrency_limit=2).launch(show_error=True, max_file_size="200mb", theme=gr.themes.Soft(primary_hue="teal", secondary_hue="cyan", neutral_hue="slate"), css=CUSTOM_CSS)
+    demo.queue(default_concurrency_limit=2).launch(server_name="0.0.0.0", server_port=int(os.environ.get("PORT", "7860")), show_error=True, max_file_size="200mb", theme=gr.themes.Soft(primary_hue="teal", secondary_hue="cyan", neutral_hue="slate"), css=CUSTOM_CSS)
