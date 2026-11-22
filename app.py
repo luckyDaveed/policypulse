@@ -50,6 +50,98 @@ CATEGORY_COLUMN_CANDIDATES = [
     "subject", "government_policy",
 ]
 
+
+# Transparent keyword rules used only when an uploaded dataset has no usable
+# policy-category value. This is a heuristic, not a trained topic model.
+POLICY_CATEGORY_PATTERNS = {
+    "Economy & Cost of Living": [
+        r"\beconom(?:y|ic)\b", r"\binflation\b", r"\bcost of living\b",
+        r"\bprice(?:s)?\b", r"\bpetrol\b", r"\bfuel\b", r"\bnaira\b",
+        r"\bcurrency\b", r"\bexchange rate\b", r"\bsubsid(?:y|ies)\b",
+        r"\btax(?:es|ation)?\b", r"\bunemployment\b", r"\bjobs?\b",
+        r"\bsalar(?:y|ies)\b", r"\bwages?\b", r"\bpoverty\b",
+        r"\bbudget\b", r"\bdebt\b", r"\binterest rate\b",
+    ],
+    "Security & Insecurity": [
+        r"\bsecurity\b", r"\binsecurity\b", r"\bbandit(?:s|ry)?\b",
+        r"\bkidnapp(?:ing|ed|ers?)\b", r"\bterroris(?:m|t|ts)\b",
+        r"\binsurgenc(?:y|ies)\b", r"\bviolence\b", r"\bpolice\b",
+        r"\bmilitary\b", r"\barmy\b", r"\battack(?:s|ed)?\b",
+        r"\bransom\b", r"\bboko haram\b", r"\biswap\b",
+        r"\barmed forces\b", r"\bcommunal clash(?:es)?\b",
+    ],
+    "Education": [
+        r"\beducation\b", r"\bschools?\b", r"\bstudents?\b",
+        r"\bteachers?\b", r"\buniversit(?:y|ies)\b", r"\btuition\b",
+        r"\bexaminations?\b", r"\bjamb\b", r"\bwaec\b", r"\basuu\b",
+        r"\bscholarships?\b", r"\bclassrooms?\b", r"\blearning\b",
+    ],
+    "Healthcare": [
+        r"\bhealth(?:care)?\b", r"\bhospitals?\b", r"\bdoctors?\b",
+        r"\bnurses?\b", r"\bmedical\b", r"\bmedicines?\b",
+        r"\bdrugs?\b", r"\bvaccines?\b", r"\bclinics?\b",
+        r"\bdiseases?\b", r"\bpatients?\b", r"\bprimary health care\b",
+    ],
+    "Infrastructure & Power": [
+        r"\binfrastructure\b", r"\belectricity\b", r"\bpower supply\b",
+        r"\bpower outage\b", r"\bblackout\b", r"\boutage\b",
+        r"\bpower grid\b", r"\btransformers?\b", r"\broads?\b",
+        r"\bhighways?\b", r"\bbridges?\b", r"\brailways?\b",
+        r"\btransport(?:ation)?\b", r"\bwater supply\b", r"\bbroadband\b",
+    ],
+    "Governance & Corruption": [
+        r"\bgovernance\b", r"\bcorrupt(?:ion|ed)?\b", r"\bbrib(?:e|ery)\b",
+        r"\baccountability\b", r"\btransparency\b", r"\belections?\b",
+        r"\bvot(?:e|es|ing)\b", r"\bpoliticians?\b", r"\bparliament\b",
+        r"\bnational assembly\b", r"\bsenate\b", r"\bgovernors?\b",
+        r"\bpresidents?\b", r"\bpublic funds?\b", r"\bmismanagement\b",
+        r"\bdemocracy\b", r"\bjudiciar(?:y|ies)\b", r"\bconstitution\b",
+    ],
+    "Agriculture & Food": [
+        r"\bagricultur(?:e|al)\b", r"\bfarm(?:s|er|ers|ing)?\b",
+        r"\bcrops?\b", r"\bharvests?\b", r"\bfertili[sz]ers?\b",
+        r"\blivestock\b", r"\bfood security\b", r"\bfood production\b",
+        r"\bfood supply\b", r"\bfood shortage\b", r"\birrigation\b",
+    ],
+    "Environment": [
+        r"\benvironment(?:al)?\b", r"\bclimate\b", r"\bflood(?:s|ing)?\b",
+        r"\berosion\b", r"\bpollution\b", r"\bwaste management\b",
+        r"\bdeforestation\b", r"\bemissions?\b", r"\bdrought\b",
+        r"\bsanitation\b", r"\bcarbon\b",
+    ],
+}
+
+
+def infer_policy_category(value: Any) -> str:
+    """Infer one policy area from tweet text using transparent keyword rules."""
+    if pd.isna(value):
+        return "Other / Unclassified"
+    text = str(value).lower()
+    matches = {
+        category: sum(len(re.findall(pattern, text, flags=re.IGNORECASE)) for pattern in patterns)
+        for category, patterns in POLICY_CATEGORY_PATTERNS.items()
+    }
+    best_category = max(matches, key=matches.get)
+    return best_category if matches[best_category] > 0 else "Other / Unclassified"
+
+
+def ensure_policy_categories(frame: pd.DataFrame, text_column: str) -> tuple[pd.DataFrame, str, str]:
+    """Preserve supplied categories and infer only when a category is absent/blank."""
+    category_column = detect_column(frame.columns, CATEGORY_COLUMN_CANDIDATES)
+    if category_column is None:
+        category_column = "policy_category"
+        frame[category_column] = frame[text_column].map(infer_policy_category)
+        return frame, category_column, "keyword-based"
+
+    values = frame[category_column]
+    missing = values.isna() | values.astype(str).str.strip().str.lower().isin(
+        {"", "nan", "none", "null", "unknown", "unspecified"}
+    )
+    if missing.any():
+        frame.loc[missing, category_column] = frame.loc[missing, text_column].map(infer_policy_category)
+        return frame, category_column, "uploaded values + keyword fill for missing values"
+    return frame, category_column, "uploaded dataset"
+
 STOP_WORDS = {
     "the", "and", "for", "you", "your", "are", "was", "were", "with",
     "that", "this", "from", "have", "has", "had", "but", "not", "they",
@@ -210,6 +302,7 @@ def process_dataframe(
 
     analyzer = SentimentIntensityAnalyzer()
     output_parts: list[pd.DataFrame] = []
+    category_methods_seen: set[str] = set()
     blank_count = 0
     total = len(frame)
     step = max(1, min(5_000, total))
@@ -225,6 +318,8 @@ def process_dataframe(
             scores = cleaned.map(lambda value: float(analyzer.polarity_scores(value)["compound"]))
             part["compound_score"] = scores.astype(float)
             part["sentiment"] = part["compound_score"].map(classify_compound)
+            part, _, category_method = ensure_policy_categories(part, text_column)
+            category_methods_seen.add(category_method)
             output_parts.append(part)
         if progress is not None:
             progress(min(0.95, (start + len(frame.iloc[start:start + step])) / max(total, 1) * 0.95),
@@ -234,7 +329,13 @@ def process_dataframe(
         raise ValueError("No usable text records were found in the selected column.")
     result = pd.concat(output_parts, ignore_index=True)
     date_col = detect_column(result.columns, DATE_COLUMN_CANDIDATES)
-    category_col = detect_column(result.columns, CATEGORY_COLUMN_CANDIDATES)
+    result, category_col, _ = ensure_policy_categories(result, text_column)
+    category_method = (
+        "keyword-based" if "keyword-based" in category_methods_seen else
+        "uploaded values + keyword fill for missing values"
+        if "uploaded values + keyword fill for missing values" in category_methods_seen else
+        "uploaded dataset"
+    )
     metadata = {
         "source": source_label,
         "text_column": text_column,
@@ -243,6 +344,7 @@ def process_dataframe(
         "empty_rows_skipped": int(blank_count),
         "date_column": date_col,
         "category_column": category_col,
+        "category_method": category_method,
     }
     if progress is not None:
         progress(1.0, desc="Analysis complete")
@@ -264,6 +366,7 @@ def process_uploaded_file(file_obj: Any, selected_column: str = "Auto-detect", p
     blank_count = 0
     analyzer = SentimentIntensityAnalyzer()
     parts: list[pd.DataFrame] = []  # Used only for Excel, which pandas reads as one sheet.
+    category_methods_seen: set[str] = set()
     staged_csv_path: str | None = None
     wrote_header = False
     if progress is not None:
@@ -302,6 +405,8 @@ def process_uploaded_file(file_obj: Any, selected_column: str = "Auto-detect", p
                         lambda value: float(analyzer.polarity_scores(value)["compound"])
                     ).astype(float)
                     valid["sentiment"] = valid["compound_score"].map(classify_compound)
+                    valid, _, category_method = ensure_policy_categories(valid, chosen_column)
+                    category_methods_seen.add(category_method)
                     valid.to_csv(staged_csv_path, mode="a", header=not wrote_header,
                                  index=False, encoding="utf-8-sig" if not wrote_header else "utf-8")
                     wrote_header = True
@@ -326,11 +431,20 @@ def process_uploaded_file(file_obj: Any, selected_column: str = "Auto-detect", p
                     lambda value: float(analyzer.polarity_scores(value)["compound"])
                 ).astype(float)
                 valid["sentiment"] = valid["compound_score"].map(classify_compound)
+                valid, _, category_method = ensure_policy_categories(valid, chosen_column)
+                category_methods_seen.add(category_method)
                 parts.append(valid)
             if not parts:
                 raise ValueError("No usable text records were found in the selected column.")
             result = pd.concat(parts, ignore_index=True)
 
+        result, category_col, _ = ensure_policy_categories(result, chosen_column)
+        category_method = (
+            "keyword-based" if "keyword-based" in category_methods_seen else
+            "uploaded values + keyword fill for missing values"
+            if "uploaded values + keyword fill for missing values" in category_methods_seen else
+            "uploaded dataset"
+        )
         metadata = {
             "source": source_name,
             "text_column": chosen_column,
@@ -338,7 +452,8 @@ def process_uploaded_file(file_obj: Any, selected_column: str = "Auto-detect", p
             "analysed_rows": int(len(result)),
             "empty_rows_skipped": int(blank_count),
             "date_column": detect_column(result.columns, DATE_COLUMN_CANDIDATES),
-            "category_column": detect_column(result.columns, CATEGORY_COLUMN_CANDIDATES),
+            "category_column": category_col,
+            "category_method": category_method,
             "file_size_mb": round(os.path.getsize(path) / (1024 * 1024), 2),
             "file_type": suffix,
         }
@@ -414,21 +529,26 @@ def build_charts(data: pd.DataFrame, metadata: dict[str, Any]):
         timeline = _empty_figure("No date column detected. Add a date/timestamp column to view a timeline.")
 
     category_col = metadata.get("category_column")
-    if category_col and category_col in data.columns:
+    if not category_col or category_col not in data.columns:
+        category_col = "policy_category"
+        category_data = data[[metadata["text_column"], "sentiment"]].copy()
+        category_data[category_col] = category_data[metadata["text_column"]].map(infer_policy_category)
+    else:
         category_data = data[[category_col, "sentiment"]].copy()
+    if category_col in category_data.columns:
         category_data[category_col] = category_data[category_col].fillna("Unspecified").astype(str)
         top_categories = category_data[category_col].value_counts().head(12).index
         category_data = category_data[category_data[category_col].isin(top_categories)]
         category_data = category_data.groupby([category_col, "sentiment"]).size().reset_index(name="Posts")
         category_fig = px.bar(category_data, x=category_col, y="Posts", color="sentiment",
                               barmode="group", color_discrete_map=SENTIMENT_COLORS,
-                              title="Sentiment by policy/category field")
+                              title="Sentiment by policy category")
         category_fig.update_layout(template="plotly_dark", paper_bgcolor="rgba(0,0,0,0)",
                                    plot_bgcolor="rgba(0,0,0,0)", font_color="#E5EDF5", height=360,
                                    legend_title_text="", margin={"l": 20, "r": 15, "t": 55, "b": 70},
                                    xaxis_tickangle=-25)
     else:
-        category_fig = _empty_figure("No policy/category column detected. The app will not invent policy categories.")
+        category_fig = _empty_figure("No policy-category records are available in this dataset.")
     return distribution, timeline, category_fig
 
 
@@ -450,6 +570,10 @@ def build_kpi_html(data: pd.DataFrame, metadata: dict[str, Any]) -> str:
             f"{metadata.get('empty_rows_skipped', 0):,} blank text rows skipped")
     if metadata.get("synthetic"):
         note = "SYNTHETIC DEMONSTRATION DATA — not real X/Twitter posts and not evidence of public opinion."
+    elif metadata.get("category_method") == "keyword-based":
+        note += " · Policy categories inferred from tweet text using keyword rules"
+    elif metadata.get("category_method") == "uploaded values + keyword fill for missing values":
+        note += " · Existing policy categories preserved; missing categories inferred using keyword rules"
     return f'<div class="kpi-grid">{card_html}</div><div class="dataset-note">{html.escape(note)}</div>'
 
 
@@ -802,6 +926,7 @@ def build_app():
 - The VADER compound score is classified as **Positive (≥ 0.05)**, **Negative (≤ −0.05)** or **Neutral (> −0.05 and < 0.05)**.
 - URL strings and excess whitespace are removed. Punctuation, capitalisation, emojis, hashtags and negation are retained because they can carry sentiment information.
 - Rows with missing or empty post text are skipped and counted. The system does not claim to remove duplicate posts.
+- If the uploaded dataset has no policy-category column, the application assigns a category from tweet text using transparent keyword rules. Existing category values are preserved; blank values are filled by the same rules. Unmatched posts are labelled **Other / Unclassified**. This is a rule-based heuristic, not a trained topic model, so ambiguous posts may be misclassified.
 
 ### Scope and limitations
 - There is **no direct X/Twitter API connection** in this version. It does not continuously collect live posts.
