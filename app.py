@@ -593,7 +593,7 @@ def _gemini_interaction(api_key: str, model: str, prompt: str) -> str:
 def local_assistant_reply(question: str, state: dict[str, Any] | None) -> str:
     if not state or "data" not in state:
         return ("I can answer general questions about how PolicyPulse works. Upload and analyse a dataset "
-                "to ask questions about its sentiment results. Enter a Gemini API key to enable the optional AI assistant.")
+                "to ask questions about its sentiment results. Gemini is not configured on the server yet.")
     data, meta = state["data"], state["metadata"]
     metrics = build_metrics(data)
     top = ", ".join(f"{name} ({count})" for name, count in frequent_terms(data, meta["text_column"], 5)) or "not available"
@@ -604,49 +604,61 @@ def local_assistant_reply(question: str, state: dict[str, Any] | None) -> str:
         f"Neutral: {metrics['percentages']['Neutral']:.1f}% ({metrics['counts']['Neutral']:,}). "
         f"Frequent terms include: {top}. These figures describe only the uploaded dataset. "
         "VADER is rule/lexicon based and may misread sarcasm, Nigerian Pidgin, slang or context. "
-        "For a natural-language explanation, enter a Gemini API key."
+        "For natural-language explanations, configure GEMINI_API_KEY in the Render environment settings."
     )
 
 
-def chat_reply(message: str, history: list[dict[str, Any]] | None, state: dict[str, Any] | None,
-               api_key: str, model: str):
+def chat_reply(message: str, history: list[dict[str, Any]] | None,
+               state: dict[str, Any] | None):
+    """Answer using the server-side Gemini key when configured; never accept a key from the browser."""
     history = list(history or [])
     question = (message or "").strip()
     if not question:
         return history, ""
+
+    # Secrets are read only on the server from Render environment variables.
+    api_key = os.getenv("GEMINI_API_KEY", "").strip()
+    model = os.getenv("GEMINI_MODEL", GEMINI_DEFAULT_MODEL).strip()
+
     try:
-        if api_key and api_key.strip():
-            context = "No dataset is loaded. Do not make claims about results." 
+        if api_key:
+            context = "No dataset is loaded. Do not make claims about results."
             if state and "data" in state:
                 data, meta = state["data"], state["metadata"]
-                m = build_metrics(data)
+                metrics = build_metrics(data)
                 context = (
-                    f"Uploaded dataset summary only: {m['total']} analysed records; "
-                    f"positive {m['percentages']['Positive']:.2f}% ({m['counts']['Positive']}); "
-                    f"negative {m['percentages']['Negative']:.2f}% ({m['counts']['Negative']}); "
-                    f"neutral {m['percentages']['Neutral']:.2f}% ({m['counts']['Neutral']}); "
+                    f"Uploaded dataset summary only: {metrics['total']} analysed records; "
+                    f"positive {metrics['percentages']['Positive']:.2f}% ({metrics['counts']['Positive']}); "
+                    f"negative {metrics['percentages']['Negative']:.2f}% ({metrics['counts']['Negative']}); "
+                    f"neutral {metrics['percentages']['Neutral']:.2f}% ({metrics['counts']['Neutral']}); "
                     f"source={meta.get('source')}; synthetic={meta.get('synthetic', False)}. "
                     "This dataset is not necessarily representative of Nigeria."
                 )
             recent_turns = []
-            for turn in (history or [])[-8:]:
+            for turn in history[-8:]:
                 if isinstance(turn, dict):
                     role = str(turn.get("role", "user"))
                     content = str(turn.get("content", ""))
-                else:
-                    continue
-                if content:
-                    recent_turns.append(f"{role}: {content}")
-            conversation = "\n".join(recent_turns)
-            prompt = context + "\nRecent conversation:\n" + conversation + "\nUser question: " + question
-            answer = _gemini_interaction(api_key.strip(), model, prompt)
+                    if content:
+                        recent_turns.append(f"{role}: {content}")
+            conversation = "\\n".join(recent_turns)
+            prompt = context + "\\nRecent conversation:\\n" + conversation + "\\nUser question: " + question
+            answer = _gemini_interaction(api_key, model, prompt)
         else:
             answer = local_assistant_reply(question, state)
     except requests.HTTPError as exc:
-        answer = f"Gemini request failed (HTTP {exc.response.status_code if exc.response is not None else 'unknown'}). Verify the API key, model access and quota."
-    except Exception as exc:
-        answer = f"Assistant unavailable: {exc}"
-    history.extend([{"role": "user", "content": question}, {"role": "assistant", "content": answer}])
+        status = exc.response.status_code if exc.response is not None else "unknown"
+        answer = (
+            f"Gemini request failed (HTTP {status}). Check the server-side API key, "
+            "model access and Google AI Studio quota."
+        )
+    except requests.RequestException:
+        answer = "Gemini is temporarily unreachable. Please try again shortly."
+    except Exception:
+        answer = "The assistant encountered an error. Check the Render service logs for details."
+
+    history.extend([{"role": "user", "content": question},
+                    {"role": "assistant", "content": answer}])
     return history[-20:], ""
 
 # ---------------------------------------------------------------------------
@@ -767,15 +779,16 @@ def build_app():
                 single_button.click(analyse_single_post, inputs=single_text, outputs=[single_result, single_note])
 
             with gr.Tab("AI assistant"):
-                gr.Markdown("The optional Gemini assistant is separate from VADER. Without an API key, the assistant returns a basic summary of the loaded dashboard only.")
+                gr.Markdown(
+                    "Ask questions about the uploaded dataset and its sentiment results. "
+                    "When Gemini is configured by the administrator, replies are generated by Gemini. "
+                    "The API key is stored in the server environment and is never entered or displayed here."
+                )
                 chatbot = gr.Chatbot(label="PolicyPulse assistant", height=360)
                 with gr.Row():
                     chat_input = gr.Textbox(label="Ask a question", placeholder="Explain the sentiment distribution...", scale=5)
                     chat_send = gr.Button("Send", variant="primary", scale=1)
-                with gr.Row():
-                    gemini_key = gr.Textbox(label="Optional Gemini API key", type="password", placeholder="Paste your API key here; do not share it")
-                    gemini_model = gr.Textbox(label="Gemini model", value=GEMINI_DEFAULT_MODEL)
-                chat_inputs = [chat_input, chatbot, analysis_state, gemini_key, gemini_model]
+                chat_inputs = [chat_input, chatbot, analysis_state]
                 chat_outputs = [chatbot, chat_input]
                 chat_send.click(chat_reply, inputs=chat_inputs, outputs=chat_outputs)
                 chat_input.submit(chat_reply, inputs=chat_inputs, outputs=chat_outputs)
